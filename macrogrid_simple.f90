@@ -1,23 +1,54 @@
 program macrogrid_solver
     implicit none
     logical :: one_sor = .true.
-    integer, parameter :: max_iter = 1000000
+    integer, parameter :: max_iter = 10000000
     real*8, parameter :: epsilon = 1.0d-5
     integer, dimension(8) :: u_sizes = [10, 18, 34, 66, 130, 258, 514, 1026]
     real*8, dimension(8) :: factors = [1.52729d0, 1.69504d0, 1.82964d0, 1.90932d0, 1.95305d0, 1.97616d0, 1.98798d0, 1.99394d0]
-    integer :: i, subgrid_size, num_subgrids, iterations
+    real*8, dimension(8) :: factors_hard = [1.52129d0, 1.69524d0, 1.82919d0, 1.90899d0, 1.95307d0, 1.97618d0, 1.98793d0, 1.99403d0]
+    integer, dimension(8) :: test_size_indices = [1, 2, 3, 4, 5, 6, 7, 8]
+    integer, dimension(8) :: test_subgrids = [4, 4, 4, 4, 4, 4, 4, 4]
+    integer :: i, subgrid_size, num_subgrids, one_sor_ind
     real*8 :: omega
     real*8 :: macrogrid(10, 10, 1026, 1026)
 
-    i = 1
-    one_sor = .false.
-    subgrid_size = u_sizes(i)
-    omega = factors(i)
-    num_subgrids = 2
+    print *, "ones task"
+    do one_sor_ind = 1, 2
+        do i = 1, size(test_size_indices)
+            print *, "one_sor: ", one_sor 
+            subgrid_size = u_sizes(test_size_indices(i))
+            omega = factors(test_size_indices(i))
+            num_subgrids = test_subgrids(i)
 
-    call initialize_macrogrid(macrogrid, num_subgrids, subgrid_size)
-    call solve_macrogrid_with_gmres(one_sor, macrogrid, num_subgrids, subgrid_size, omega, max_iter, epsilon, iterations)
-    call compute_error(macrogrid, num_subgrids, subgrid_size)
+            call initialize_macrogrid(macrogrid, num_subgrids, subgrid_size)
+
+            print *, "Running test with subgrid size: ", subgrid_size, " and number of subgrids: ", num_subgrids
+            call measure_time(one_sor, macrogrid, num_subgrids, subgrid_size, omega, max_iter, epsilon)
+
+            call compute_error(macrogrid, num_subgrids, subgrid_size)
+            print *,""
+        end do
+        one_sor = .not.one_sor
+    end do
+
+    print *, "hard task"
+    do one_sor_ind = 1, 2
+        do i = 1, size(test_size_indices)
+            print *, "one_sor: ", one_sor 
+            subgrid_size = u_sizes(test_size_indices(i))
+            omega = factors_hard(test_size_indices(i))
+            num_subgrids = test_subgrids(i)
+
+            call initialize_hard_macrogrid(macrogrid, num_subgrids, subgrid_size)
+
+            print *, "Running test with subgrid size: ", subgrid_size, " and number of subgrids: ", num_subgrids
+            call measure_time(one_sor, macrogrid, num_subgrids, subgrid_size, omega, max_iter, epsilon)
+
+            call compute_hard_error(macrogrid, num_subgrids, subgrid_size)
+            print *,""
+        end do
+        one_sor = .not.one_sor
+    end do
 
 end program macrogrid_solver
 
@@ -38,6 +69,36 @@ subroutine print_macrogrid(macrogrid, num_subgrids, subgrid_size)
         end do
     end do
 end subroutine print_macrogrid
+
+subroutine print_hard_fun(num_subgrids, subgrid_size)
+    implicit none
+    real*8 :: R1 = 0.1d0
+    real*8 :: R2 = 1.0d0
+    real*8 :: x_min = 0.3d0
+    real*8 :: y_min = 0.0d0
+    real*8 :: len = 0.4d0
+    
+    integer, intent(in) :: num_subgrids, subgrid_size
+    integer :: u_size, i0, j0, i1, j1, l0, l1
+
+    u_size = num_subgrids*subgrid_size - num_subgrids + 1
+
+    do i0 = 1, num_subgrids
+        do i1 = 1, subgrid_size
+            do j0 = 1, num_subgrids
+                do j1 = 1, subgrid_size
+
+                    l1 = i1 + (i0-1)*subgrid_size - i0 + 1
+                    l0 = j1 + (j0-1)*subgrid_size - j0 + 1
+                    write(*, '(10F8.3)', advance='no') &
+                        log(sqrt((x_min + len*(l1 - 1)/(u_size-1))**2 + (y_min + len*(l0 - 1)/(u_size-1))**2)*R2/(R1*R1))/log(R2/R1)
+        
+                end do
+            end do
+            print *, ' '
+        end do
+    end do
+end subroutine print_hard_fun
 
 subroutine initialize_macrogrid(macrogrid, num_subgrids, subgrid_size)
     implicit none
@@ -66,6 +127,42 @@ subroutine initialize_macrogrid(macrogrid, num_subgrids, subgrid_size)
         end do
     end do
 end subroutine initialize_macrogrid
+
+subroutine initialize_hard_macrogrid(macrogrid, num_subgrids, subgrid_size)
+    implicit none
+    real*8 :: R1 = 0.1d0
+    real*8 :: R2 = 1.0d0
+    real*8 :: x_min = 0.3d0
+    real*8 :: y_min = 0.0d0
+    real*8 :: len = 0.4d0
+    
+    integer, intent(in) :: num_subgrids, subgrid_size
+    real*8, intent(inout) :: macrogrid(num_subgrids, num_subgrids, subgrid_size, subgrid_size)
+    integer :: u_size, i0, j0, i1, j1, l0, l1
+
+    u_size = num_subgrids*subgrid_size - num_subgrids + 1
+
+    do i0 = 1, num_subgrids
+        do i1 = 1, subgrid_size
+            do j0 = 1, num_subgrids
+                do j1 = 1, subgrid_size
+
+                    l1 = i1 + (i0-1)*subgrid_size - i0 + 1
+                    l0 = j1 + (j0-1)*subgrid_size - j0 + 1
+
+                    if (l0.eq.1 .or. l0.eq.u_size .or. l1.eq.1 .or. l1.eq.u_size) then
+                        macrogrid(j0,i0,j1,i1) = &
+                        log(sqrt((x_min + len*(l1 - 1)/(u_size-1))**2 + (y_min + len*(l0 - 1)/(u_size-1))**2)*R2/(R1*R1))/log(R2/R1)
+                    else
+                        macrogrid(i0,j0,i1,j1) = 0.0d0
+                    end if
+
+                end do
+            end do
+        end do
+    end do
+
+end subroutine initialize_hard_macrogrid
 
 subroutine solve_sor(u, u_size, factor, eps, max_iter, iter_error)
     implicit none
@@ -100,6 +197,64 @@ subroutine solve_sor(u, u_size, factor, eps, max_iter, iter_error)
     end do
 
 end subroutine solve_sor
+
+subroutine update_boundaries(macrogrid, num_subgrids, subgrid_size, norm)
+    implicit none
+    integer, intent(in) :: num_subgrids, subgrid_size
+    real*8, intent(inout) :: macrogrid(num_subgrids, num_subgrids, subgrid_size, subgrid_size)
+    real*8, intent(out) :: norm
+    integer :: i, j, k
+    real*8 :: old_value, avg
+
+    norm = 0.0d0
+
+    do i = 1, num_subgrids
+        do j = 1, num_subgrids-1
+            do k = 2, subgrid_size-1
+                old_value = macrogrid(i,j,k,subgrid_size)
+                avg = (4.0d0*macrogrid(i,j,k,subgrid_size-1)+4.0d0*macrogrid(i,j+1,k,2) - &
+                macrogrid(i,j,k,subgrid_size-2)-macrogrid(i,j+1,k,3))/6.0d0
+                macrogrid(i,j,k,subgrid_size) = avg
+                macrogrid(i,j+1,k,1) = avg
+                norm = norm + abs(avg - old_value)
+            end do
+        end do
+    end do
+
+    do i = 1, num_subgrids-1
+        do j = 1, num_subgrids
+            do k = 2, subgrid_size-1
+                old_value = macrogrid(i,j,subgrid_size,k)
+                avg = (4.0d0*macrogrid(i,j,subgrid_size-1,k) + 4.0d0*macrogrid(i+1,j,2,k) - &
+                macrogrid(i,j,subgrid_size-2,k) - macrogrid(i+1,j,3,k))/6.0d0
+                macrogrid(i,j,subgrid_size,k) = avg
+                macrogrid(i+1,j,1,k) = avg
+                norm = norm + abs(avg - old_value)
+            end do
+        end do
+    end do
+
+    do i = 1, num_subgrids-1
+        do j = 1, num_subgrids-1
+            old_value = macrogrid(i,j,subgrid_size,subgrid_size)
+            avg = (4.0d0*macrogrid(i,j,subgrid_size,subgrid_size-1) + &
+            4.0d0*macrogrid(i,j,subgrid_size-1,subgrid_size) + &
+            4.0d0*macrogrid(i+1,j+1,2,1) + &
+            4.0d0*macrogrid(i+1,j+1,1,2) - &
+            macrogrid(i,j,subgrid_size,subgrid_size-2) - &
+            macrogrid(i,j,subgrid_size-2,subgrid_size) - &
+            macrogrid(i+1,j+1,3,1) - &
+            macrogrid(i+1,j+1,1,3))/12.0d0
+
+            macrogrid(i,j,subgrid_size,subgrid_size) = avg
+            macrogrid(i+1,j,1,subgrid_size) = avg
+            macrogrid(i,j+1,subgrid_size,1) = avg
+            macrogrid(i+1,j+1,1,1) = avg
+            norm = norm + abs(avg - old_value)
+        end do
+    end do
+
+end subroutine update_boundaries
 
 subroutine scalar_product(a, b, size, result)
     implicit none
@@ -283,8 +438,6 @@ subroutine update_boundaries_gmres(macrogrid, b, num_subgrids, subgrid_size, bor
 
     end do
 
-    write (*,*) iter
-
     l = 1
     norm = 0.0d0
 
@@ -327,6 +480,45 @@ subroutine update_boundaries_gmres(macrogrid, b, num_subgrids, subgrid_size, bor
 
 end subroutine update_boundaries_gmres
 
+subroutine solve_macrogrid(one_sor, macrogrid, num_subgrids, subgrid_size, omega, max_iter, epsilon, iterations)
+    implicit none
+    logical, intent(in) :: one_sor
+    integer, intent(in) :: num_subgrids, subgrid_size, max_iter
+    real*8, intent(in) :: omega, epsilon
+    real*8, intent(inout) :: macrogrid(num_subgrids, num_subgrids, subgrid_size, subgrid_size)
+    integer, intent(out) :: iterations
+    integer :: i, j, iter, max_iter_sor
+    real*8 :: norm, norm_sor, norm_boundaries
+
+    max_iter_sor = max_iter
+    if (one_sor) max_iter_sor = 1
+
+    iterations = 0
+
+    do iter = 1, max_iter
+        norm = 0.0d0
+
+        do i = 1, num_subgrids
+            do j = 1, num_subgrids
+                call solve_sor(macrogrid(i,j,:,:), subgrid_size, omega, epsilon, max_iter_sor, norm_sor)
+                norm = norm + norm_sor
+            end do
+        end do
+
+        if (.not.one_sor) norm = 0.0d0
+
+        call update_boundaries(macrogrid, num_subgrids, subgrid_size, norm_boundaries)
+        norm = norm + norm_boundaries
+
+        if (norm < epsilon) then
+            iterations = iter
+            return
+        end if
+    end do
+
+    iterations = max_iter
+end subroutine solve_macrogrid
+
 subroutine solve_macrogrid_with_gmres(one_sor, macrogrid, num_subgrids, subgrid_size, omega, max_iter, epsilon, iterations)
     implicit none
     logical, intent(in) :: one_sor
@@ -348,10 +540,6 @@ subroutine solve_macrogrid_with_gmres(one_sor, macrogrid, num_subgrids, subgrid_
 
     norm = 0.0d0
 
-    call print_macrogrid(macrogrid, num_subgrids, subgrid_size)
-    print *, " "
-    print *, " "
-
     do i = 1, num_subgrids
         do j = 1, num_subgrids
             call solve_sor(macrogrid(i,j,:,:), subgrid_size, omega, epsilon, max_iter_sor, norm_sor)
@@ -361,13 +549,8 @@ subroutine solve_macrogrid_with_gmres(one_sor, macrogrid, num_subgrids, subgrid_
 
     call initialize_b(macrogrid, num_subgrids, subgrid_size, border_size, b)
 
-    call update_boundaries_gmres(macrogrid, b, num_subgrids, subgrid_size, border_size, max_iter, epsilon, norm_boundaries)
-
-    call print_macrogrid(macrogrid, num_subgrids, subgrid_size)
-    print *, " "
-    print *, " "
-
     do iter = 1, max_iter
+        print *, "blyat"
         norm = 0.0d0
 
         do i = 1, num_subgrids
@@ -382,6 +565,10 @@ subroutine solve_macrogrid_with_gmres(one_sor, macrogrid, num_subgrids, subgrid_
         call update_boundaries_gmres(macrogrid, b, num_subgrids, subgrid_size, border_size, max_iter, epsilon, norm_boundaries)
         norm = norm + norm_boundaries
 
+        call print_macrogrid(macrogrid, num_subgrids, subgrid_size)
+        print *, " "
+        print *, " "    
+
         if (norm < epsilon) then
             iterations = iter
             return
@@ -394,6 +581,46 @@ subroutine solve_macrogrid_with_gmres(one_sor, macrogrid, num_subgrids, subgrid_
 
     iterations = max_iter
 end subroutine solve_macrogrid_with_gmres
+
+subroutine measure_time_with_gmres(one_sor, macrogrid, num_subgrids, subgrid_size, omega, max_iter, epsilon)
+    implicit none
+    logical, intent(in) :: one_sor
+    integer, intent(in) :: num_subgrids, subgrid_size, max_iter
+    real*8, intent(in) :: omega, epsilon
+    real*8, intent(inout) :: macrogrid(num_subgrids, num_subgrids, subgrid_size, subgrid_size)
+    integer :: iterations
+    real*8 :: start_time, end_time, elapsed_time
+
+    call cpu_time(start_time)
+
+    call solve_macrogrid_with_gmres(one_sor, macrogrid, num_subgrids, subgrid_size, omega, max_iter, epsilon, iterations)
+
+    call cpu_time(end_time)
+
+    elapsed_time = end_time - start_time
+    print *, 'Time taken to solve macrogrid: ', elapsed_time, ' seconds'
+    print *, 'Number of iterations: ', iterations
+end subroutine measure_time_with_gmres
+
+subroutine measure_time(one_sor, macrogrid, num_subgrids, subgrid_size, omega, max_iter, epsilon)
+    implicit none
+    logical, intent(in) :: one_sor
+    integer, intent(in) :: num_subgrids, subgrid_size, max_iter
+    real*8, intent(in) :: omega, epsilon
+    real*8, intent(inout) :: macrogrid(num_subgrids, num_subgrids, subgrid_size, subgrid_size)
+    integer :: iterations
+    real*8 :: start_time, end_time, elapsed_time
+
+    call cpu_time(start_time)
+
+    call solve_macrogrid(one_sor, macrogrid, num_subgrids, subgrid_size, omega, max_iter, epsilon, iterations)
+
+    call cpu_time(end_time)
+
+    elapsed_time = end_time - start_time
+    print *, 'Time taken to solve macrogrid: ', elapsed_time, ' seconds'
+    print *, 'Number of iterations: ', iterations
+end subroutine measure_time
 
 subroutine compute_error(macrogrid, num_subgrids, subgrid_size)
     implicit none
@@ -417,3 +644,39 @@ subroutine compute_error(macrogrid, num_subgrids, subgrid_size)
 
     print *, 'Maximum error compared to the exact solution: ', max_error
 end subroutine compute_error
+
+subroutine compute_hard_error(macrogrid, num_subgrids, subgrid_size)
+    implicit none
+    real*8 :: R1 = 0.1d0
+    real*8 :: R2 = 1.0d0
+    real*8 :: x_min = 0.3d0
+    real*8 :: y_min = 0.0d0
+    real*8 :: len = 0.4d0
+    
+    integer, intent(in) :: num_subgrids, subgrid_size
+    real*8, intent(inout) :: macrogrid(num_subgrids, num_subgrids, subgrid_size, subgrid_size)
+    integer :: u_size, i0, j0, i1, j1, l0, l1
+    real*8 :: error
+
+    error = 0.0d0
+    u_size = num_subgrids*subgrid_size - num_subgrids + 1
+
+    do i0 = 1, num_subgrids
+        do i1 = 1, subgrid_size
+            do j0 = 1, num_subgrids
+                do j1 = 1, subgrid_size
+
+                    l1 = i1 + (i0-1)*subgrid_size - i0 + 1
+                    l0 = j1 + (j0-1)*subgrid_size - j0 + 1
+
+                    error = max(error, abs(macrogrid(j0,i0,j1,i1) - &
+                    log(sqrt((x_min + len*(l1 - 1)/(u_size-1))**2 + (y_min + len*(l0 - 1)/(u_size-1))**2)*R2/(R1*R1))/log(R2/R1)))
+
+                end do
+            end do
+        end do
+    end do
+
+    print *, 'Maximum error compared to the exact solution: ', error
+
+end subroutine compute_hard_error
